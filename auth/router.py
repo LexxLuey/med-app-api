@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from shared.config import settings
-from shared.schemas import Token
+from shared.schemas import Token, TokenData, UserLogin
+
+security = HTTPBearer()
 
 router = APIRouter(
     prefix="/api/v1/auth",
@@ -14,7 +16,19 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return token_data
 
 # Mock user for demo
 fake_users_db = {
@@ -55,13 +69,12 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     summary="Login for access token",
     description="Authenticate user and return JWT access token.",
 )
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(form_data.username, form_data.password)
+async def login_for_access_token(user_credentials: UserLogin):
+    user = authenticate_user(user_credentials.username, user_credentials.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
         )
     access_token_expires = timedelta(minutes=30)
     access_token = create_access_token(
