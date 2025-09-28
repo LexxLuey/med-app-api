@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from auth.router import router as auth_router
 from claims.router import router as claims_router
 from health.router import router as health_router
+from upload.router import router as upload_router
+from audit.router import router as audit_router
+from validation.router import router as validation_router
 
 
 @asynccontextmanager
@@ -40,6 +43,9 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(claims_router)
 app.include_router(health_router)
+app.include_router(upload_router)
+app.include_router(audit_router)
+app.include_router(validation_router)
 
 
 @app.get("/")

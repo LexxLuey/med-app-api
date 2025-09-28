@@ -53,3 +53,13 @@ class MetricsTable(Base):
     claim_count = Column(Integer)
     total_paid_amount = Column(Float)
     tenant_id = Column(String, default="default")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String)
+    user_id = Column(String)
+    timestamp = Column(String)
+    details = Column(Text)

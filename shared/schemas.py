@@ -50,3 +50,28 @@ class Token(BaseModel):
 class HealthCheck(BaseModel):
     status: str
     message: str
+
+
+class FileUploadResponse(BaseModel):
+    filename: str
+    message: str
+    records_processed: int
+
+
+class ValidationResult(BaseModel):
+    claim_id: str
+    status: str
+    error_type: str
+    error_explanation: str
+    recommended_action: str
+
+
+class AuditLog(BaseModel):
+    id: int
+    action: str
+    user_id: str
+    timestamp: str
+    details: str
+
+    class Config:
+        from_attributes = True
