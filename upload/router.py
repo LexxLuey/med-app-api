@@ -11,6 +11,7 @@ from shared.models import AuditLog, MasterTable
 from shared.schemas import FileUploadResponse
 
 from auth.router import get_current_user
+from pipeline.rules import RuleParser
 
 router = APIRouter(
     prefix="/api/v1/upload",
@@ -137,36 +138,39 @@ async def upload_technical_rules(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    """Upload technical rules document (PDF)"""
+    """Upload technical rules document (PDF) and parse rules"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be PDF format")
 
     try:
-        # For now, just save the file and log the action
-        # Full rule parsing will be implemented in Phase 4
         content = await file.read()
 
-        # Save file to a temporary location (in production, use proper storage)
+        # Save file temporarily for parsing
         file_path = f"/tmp/{file.filename}"
         with open(file_path, 'wb') as f:
             f.write(content)
+
+        # Parse technical rules
+        rule_parser = RuleParser()
+        parsed_rules = rule_parser.parse_technical_rules(file_path)
 
         # Log audit action
         log_audit_action(
             db=db,
             action="UPLOAD_TECHNICAL_RULES",
             user_id=current_user.username,
-            details=f"Uploaded technical rules document: {file.filename}"
+            details=f"Uploaded and parsed technical rules document: {file.filename}. "
+                   f"Rules extracted: {len(parsed_rules)}"
         )
 
         return FileUploadResponse(
             filename=file.filename,
-            message="Technical rules document uploaded successfully",
-            records_processed=1
+            message="Technical rules document uploaded and parsed successfully",
+            records_processed=len(parsed_rules)
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing rules: {str(e)}")
 
 
 @router.post("/rules/medical", response_model=FileUploadResponse)
@@ -175,33 +179,36 @@ async def upload_medical_rules(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    """Upload medical rules document (PDF)"""
+    """Upload medical rules document (PDF) and parse rules"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be PDF format")
 
     try:
-        # For now, just save the file and log the action
-        # Full rule parsing will be implemented in Phase 4
         content = await file.read()
 
-        # Save file to a temporary location (in production, use proper storage)
+        # Save file temporarily for parsing
         file_path = f"/tmp/{file.filename}"
         with open(file_path, 'wb') as f:
             f.write(content)
+
+        # Parse medical rules
+        rule_parser = RuleParser()
+        parsed_rules = rule_parser.parse_medical_rules(file_path)
 
         # Log audit action
         log_audit_action(
             db=db,
             action="UPLOAD_MEDICAL_RULES",
             user_id=current_user.username,
-            details=f"Uploaded medical rules document: {file.filename}"
+            details=f"Uploaded and parsed medical rules document: {file.filename}. "
+                   f"Rules extracted: {len(parsed_rules)}"
         )
 
         return FileUploadResponse(
             filename=file.filename,
-            message="Medical rules document uploaded successfully",
-            records_processed=1
+            message="Medical rules document uploaded and parsed successfully",
+            records_processed=len(parsed_rules)
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing rules: {str(e)}")

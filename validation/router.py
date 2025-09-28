@@ -7,6 +7,7 @@ from shared.schemas import ValidationResult
 from shared.config import settings
 
 from auth.router import get_current_user
+from pipeline.tasks import process_claim_batch
 
 router = APIRouter(
     prefix="/api/v1/validation",
@@ -52,70 +53,22 @@ async def run_validation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    """Trigger validation process for all claims"""
+    """Trigger validation process for all claims using the pipeline"""
     # Get all claims that haven't been validated yet
-    claims = db.query(MasterTable).filter(MasterTable.status == "Not validated").all()
+    claims = db.query(MasterTable).filter(MasterTable.status == "Not validated").limit(50).all()
 
-    validated_count = 0
-    error_counts = {"No error": 0, "Medical error": 0, "Technical error": 0, "both": 0}
-    total_paid_by_error = {"No error": 0.0, "Medical error": 0.0, "Technical error": 0.0, "both": 0.0}
+    if not claims:
+        return {"message": "No claims to validate", "processed_count": 0}
 
-    for claim in claims:
-        # Perform validation
-        result = perform_basic_validation(claim)
+    claim_ids = [claim.claim_id for claim in claims]
 
-        # Update master table
-        claim.status = result.status
-        claim.error_type = result.error_type
-        claim.error_explanation = result.error_explanation
-        claim.recommended_action = result.recommended_action
-
-        # Create refined table entry
-        refined_claim = RefinedTable(
-            claim_id=claim.claim_id,
-            encounter_type=claim.encounter_type,
-            service_date=claim.service_date,
-            national_id=claim.national_id,
-            member_id=claim.member_id,
-            facility_id=claim.facility_id,
-            unique_id=claim.unique_id,
-            diagnosis_codes=claim.diagnosis_codes,
-            service_code=claim.service_code,
-            paid_amount_aed=claim.paid_amount_aed,
-            approval_number=claim.approval_number,
-            status=result.status,
-            error_type=result.error_type,
-            error_explanation=result.error_explanation,
-            recommended_action=result.recommended_action
-        )
-        db.add(refined_claim)
-
-        # Update metrics
-        error_counts[result.error_type] += 1
-        if claim.paid_amount_aed:
-            total_paid_by_error[result.error_type] += claim.paid_amount_aed
-
-        validated_count += 1
-
-    # Create metrics entries
-    for error_type, count in error_counts.items():
-        if count > 0:
-            metric = MetricsTable(
-                error_type=error_type,
-                claim_count=count,
-                total_paid_amount=total_paid_by_error[error_type],
-                tenant_id=settings.tenant_id
-            )
-            db.add(metric)
-
-    db.commit()
+    # Add background task for processing
+    background_tasks.add_task(process_claim_batch, claim_ids)
 
     return {
-        "message": f"Validation completed for {validated_count} claims",
-        "metrics": {
-            "error_counts": error_counts,
-            "total_paid_by_error": total_paid_by_error
-        }
+        "message": f"Validation pipeline started for {len(claim_ids)} claims",
+        "claim_ids": claim_ids,
+        "status": "processing"
     }
 
 
