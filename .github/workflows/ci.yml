@@ -9,6 +9,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: test-secret-key-for-ci-1234567890123456789012345678901234567890
+      GEMINI_API_KEY: test-gemini-api-key-for-ci-testing-purposes-only
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,4 +28,3 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ --tb=short
-
