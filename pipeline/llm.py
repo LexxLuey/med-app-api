@@ -23,6 +23,30 @@ class MedicalAnalysisResponse(BaseModel):
     )
 
 
+class KeyValuePair(BaseModel):
+    key: str
+    value: str
+
+
+class TechnicalRulesResponse(BaseModel):
+    """Structured response for technical rules extraction"""
+    paid_amount_threshold: int = Field(description="AED threshold for paid amounts")
+    approval_required_services: List[str] = Field(description="Service codes requiring approval")
+    approval_required_diagnoses: List[str] = Field(description="Diagnosis codes requiring approval")
+    required_fields: List[str] = Field(description="Required claim fields")
+    unique_id_format: str = Field(description="unique_id structure description")
+    case_format: str = Field(description="Case requirements")
+
+
+class MedicalRulesResponse(BaseModel):
+    """Structured response for medical rules extraction"""
+    inpatient_services: List[str] = Field(description="Services limited to inpatient")
+    outpatient_services: List[str] = Field(description="Services limited to outpatient")
+    facility_registry: List[KeyValuePair] = Field(description="Facility registry as key-value pairs")
+    diagnosis_service_mappings: List[KeyValuePair] = Field(description="Diagnosis-service mappings as key-value pairs")
+    mutually_exclusive: List[KeyValuePair] = Field(description="Mutually exclusive diagnoses as key-value pairs")
+
+
 class LLMService:
     """Service for LLM-based medical rule evaluation using Google Gemini"""
 
@@ -64,12 +88,12 @@ CLAIM INFORMATION:
 MEDICAL GUIDELINES TO APPLY:
 {rules_context}
 
-Please analyze this claim and determine:
-1. Is this claim medically appropriate based on the diagnosis and service provided?
-2. Are there any medical necessity concerns?
-3. Does the service align with standard medical practice for this diagnosis?
+Please analyze this claim and determine if medically appropriate. Return:
+- medical_necessity_concerns as list of bullet-point strings (each bullet explains one error based on guidelines, e.g. "• Service not eligible at this facility type per guidelines")
+- alignment_with_standards explanation
+- actionable recommendations list
 
-Be thorough but concise. If you cannot determine medical appropriateness, err on the side of caution."""
+Be thorough. Err on side of caution for medical concerns."""
 
     def _call_gemini_with_structured_output(
         self, prompt: str, claim_id: str
@@ -152,6 +176,73 @@ Be thorough but concise. If you cannot determine medical appropriateness, err on
         formatted.append(f"Paid Amount: AED {claim_data.get('paid_amount_aed', 'Not specified')}")
 
         return "\n".join(formatted)
+
+    def extract_rules_from_pdf(self, pdf_text: str, rule_type: str) -> Dict[str, Any]:
+        """Extract structured rules from PDF text using LLM"""
+        try:
+            prompt = self._build_rules_extraction_prompt(pdf_text, rule_type)
+            logger.info(f"[LLM] Extracting {rule_type} rules from PDF")
+
+            if rule_type == "technical":
+                schema = TechnicalRulesResponse
+            else:
+                schema = MedicalRulesResponse
+
+            response = self.client.models.generate_content(
+                model="gemini-2.0-flash-001",
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=2000,
+                    thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                ),
+            )
+
+            rules = schema.model_validate_json(response.text).model_dump()
+            logger.info(f"[LLM] Successfully extracted {rule_type} rules")
+            return rules
+
+        except Exception as e:
+            logger.error(f"[LLM] Failed to extract {rule_type} rules: {str(e)}")
+            return {}
+
+    def _build_rules_extraction_prompt(self, pdf_text: str, rule_type: str) -> str:
+        """Build prompt for rules extraction"""
+        if rule_type == "technical":
+            return f"""Extract technical adjudication rules from this document text. Return a JSON object with the following structure:
+
+{{
+  "paid_amount_threshold": number (the AED threshold for paid amounts, e.g. 250),
+  "approval_required_services": array of service codes requiring pre-approval,
+  "approval_required_diagnoses": array of diagnosis codes requiring pre-approval,
+  "required_fields": array of required claim fields,
+  "unique_id_format": string describing the unique_id structure,
+  "case_format": string describing case requirements (UPPERCASE/any)
+}}
+
+Focus on sections about thresholds, approvals, ID formatting, and required fields. Ignore example claims.
+
+Document Text:
+{pdf_text}
+"""
+        else:
+            return f"""Extract medical adjudication rules from this document text. Return a JSON object with the following structure:
+
+{{
+  "inpatient_services": array of service codes limited to inpatient encounters,
+  "outpatient_services": array of service codes limited to outpatient encounters,
+  "facility_registry": array of objects with "key" and "value" fields (facility ID to type),
+  "diagnosis_service_mappings": array of objects with "key" and "value" fields (diagnosis to required service),
+  "mutually_exclusive": array of objects with "key" and "value" fields (diagnosis pairs that cannot coexist)
+}}
+
+Focus on sections A, B, C, D about encounter types, facility types, diagnosis requirements, and exclusions.
+
+Document Text:
+{pdf_text}
+"""
 
     def validate_llm_response(self, response: Dict[str, Any]) -> bool:
         """Validate LLM response structure"""

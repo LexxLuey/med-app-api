@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ class ClaimBase(BaseModel):
     approval_number: Optional[str] = None
     status: Optional[str] = None
     error_type: Optional[str] = None
-    error_explanation: Optional[str] = None
+    error_explanation: Optional[List[str]] = None
     recommended_action: Optional[str] = None
 
 
@@ -62,7 +62,7 @@ class ValidationResult(BaseModel):
     claim_id: str
     status: str
     error_type: str
-    error_explanation: str
+    error_explanation: List[str]
     recommended_action: str
 
 

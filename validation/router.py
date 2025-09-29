@@ -267,6 +267,26 @@ async def get_paginated_validation_results(
     )
     available_error_types = [et[0] for et in error_types]
 
+    import json as json_module
+
+    def parse_error_explanation(error_text):
+        """Parse error_explanation: try JSON first, fallback to \n split for old data"""
+        if not error_text:
+            return []
+        # Try JSON
+        try:
+            parsed = json_module.loads(error_text)
+            # If it's already list, return
+            if isinstance(parsed, list):
+                return [e.lstrip("• ") if isinstance(e, str) else str(e) for e in parsed]
+            return [error_text]
+        except json_module.JSONDecodeError:
+            # Split by \n for old string format
+            if "\n" in error_text:
+                return [line.lstrip("• ") for line in error_text.split("\n") if line.strip()]
+            else:
+                return [error_text.lstrip("• ")]
+
     return {
         "claims": [
             {
@@ -274,7 +294,7 @@ async def get_paginated_validation_results(
                 "claim_id": c.claim_id,
                 "status": c.status,
                 "error_type": c.error_type,
-                "error_explanation": c.error_explanation,
+                "error_explanation": parse_error_explanation(c.error_explanation),
                 "recommended_action": c.recommended_action,
                 "paid_amount_aed": c.paid_amount_aed,
                 "service_date": c.service_date,

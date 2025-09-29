@@ -91,7 +91,7 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
                 # Step 4: Update master table
                 claim.status = "Validated"
                 claim.error_type = combined_type
-                claim.error_explanation = "; ".join(combined_errors) if combined_errors else ""
+                claim.error_explanation = json.dumps(combined_errors) if combined_errors else "[]"
                 claim.recommended_action = _generate_recommendations(combined_errors)
 
                 # Step 5: Create refined table entry
@@ -181,22 +181,30 @@ def _combine_error_types(technical_type: str, medical_type: str) -> str:
 
 
 def _generate_recommendations(errors: List[str]) -> str:
-    """Generate actionable recommendations based on errors"""
+    """Generate actionable, targeted recommendations based on error content"""
     recommendations = []
+    error_lower = " ".join(errors).lower()  # Combine for context
 
-    for error in errors:
-        if "threshold" in error.lower():
-            recommendations.append("Review payment amount against policy limits")
-        elif "required" in error.lower():
-            recommendations.append("Complete missing required fields")
-        elif "approval" in error.lower():
-            recommendations.append("Verify approval number format and validity")
-        elif "medical" in error.lower():
-            recommendations.append("Consult medical guidelines for service necessity")
-        else:
-            recommendations.append("Manual review required")
+    if "threshold" in error_lower:
+        recommendations.append("Obtain additional approval for claims over AED 250")
+    if "requires prior approval" in error_lower:
+        if "service" in error_lower:
+            recommendations.append("Submit prior authorization request for the service code")
+        if "diagnosis" in error_lower:
+            recommendations.append("Request diagnosis-specific approval before resubmission")
+    if "missing or empty" in error_lower:
+        recommendations.append("Complete all required fields with valid data")
+    if "format" in error_lower:
+        recommendations.append("Correct unique_id format to UPPERCASE first4-nationalid-middle4-memberid-last4-facilityid")
+    if "facility type" in error_lower or "encounter type" in error_lower:
+        recommendations.append("Verify service eligibility against facility and encounter constraints")
+    if "diagnosis" in error_lower and ("incompatible" in error_lower or "exclus" in error_lower):
+        recommendations.append("Review and correct conflicting diagnosis codes")
 
-    return "; ".join(list(set(recommendations)))  # Remove duplicates
+    if not recommendations:
+        recommendations.append("Perform manual review and validation")
+
+    return "; ".join(set(recommendations))  # DRY: remove duplicates
 
 
 def trigger_pipeline_for_tenant(tenant_id: str) -> Dict[str, Any]:
