@@ -4,11 +4,7 @@ from shared import models, schemas
 
 
 def get_claim(db: Session, claim_id: str):
-    return (
-        db.query(models.MasterTable)
-        .filter(models.MasterTable.claim_id == claim_id)
-        .first()
-    )
+    return db.query(models.MasterTable).filter(models.MasterTable.claim_id == claim_id).first()
 
 
 def get_claims(db: Session, skip: int = 0, limit: int = 100):
@@ -24,11 +20,7 @@ def create_claim(db: Session, claim: schemas.ClaimCreate):
 
 
 def update_claim(db: Session, claim_id: str, claim: schemas.ClaimCreate):
-    db_claim = (
-        db.query(models.MasterTable)
-        .filter(models.MasterTable.claim_id == claim_id)
-        .first()
-    )
+    db_claim = db.query(models.MasterTable).filter(models.MasterTable.claim_id == claim_id).first()
     if db_claim:
         for key, value in claim.dict().items():
             setattr(db_claim, key, value)
@@ -38,11 +30,7 @@ def update_claim(db: Session, claim_id: str, claim: schemas.ClaimCreate):
 
 
 def delete_claim(db: Session, claim_id: str):
-    db_claim = (
-        db.query(models.MasterTable)
-        .filter(models.MasterTable.claim_id == claim_id)
-        .first()
-    )
+    db_claim = db.query(models.MasterTable).filter(models.MasterTable.claim_id == claim_id).first()
     if db_claim:
         db.delete(db_claim)
         db.commit()

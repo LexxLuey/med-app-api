@@ -1,30 +1,56 @@
-import json
-from typing import Dict, Any, List
+import logging
+from typing import Any, Dict, List
 
-import openai
-from openai import OpenAI
-
+from google import genai
+from pydantic import BaseModel, Field
 from shared.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class MedicalAnalysisResponse(BaseModel):
+    """Structured response model for medical claim analysis"""
+    is_medically_appropriate: bool = Field(description="Whether the claim is medically appropriate")
+    medical_necessity_concerns: List[str] = Field(description="List of medical necessity concerns")
+    alignment_with_standards: str = Field(description="Explanation of alignment with medical standards")
+    recommendations: List[str] = Field(description="Actionable recommendations")
+    confidence_score: float = Field(description="Confidence score between 0.0 and 1.0", ge=0.0, le=1.0)
 
 
 class LLMService:
-    """Service for LLM-based medical rule evaluation"""
+    """Service for LLM-based medical rule evaluation using Google Gemini"""
 
     def __init__(self):
-        self.client = OpenAI(api_key=settings.openai_api_key)
+        # The client automatically uses GEMINI_API_KEY from environment
+        self.client = genai.Client(
+            api_key=settings.gemini_api_key,
+        )
 
-    def evaluate_medical_claim(self, claim_data: Dict[str, Any], medical_rules: List[str]) -> Dict[str, Any]:
-        """Evaluate medical claim using LLM"""
+    def evaluate_medical_claim(
+        self, claim_data: Dict[str, Any], medical_rules: List[str]
+    ) -> Dict[str, Any]:
+        """Evaluate medical claim using LLM with structured output"""
+        claim_id = claim_data.get('claim_id', 'unknown')
+        logger.info(f"[LLM] Starting evaluation for claim {claim_id}")
+
         try:
-            # Prepare context from claim data
-            claim_context = self._format_claim_for_llm(claim_data)
+            prompt = self._build_medical_analysis_prompt(claim_data, medical_rules)
+            logger.debug(f"[LLM] Prompt built for claim {claim_id}")
 
-            # Prepare medical rules context
-            rules_context = "\n".join([f"- {rule}" for rule in medical_rules])
+            analysis = self._call_gemini_with_structured_output(prompt, claim_id)
+            return self._format_analysis_result(analysis, claim_id)
 
-            # Create prompt for LLM
-            prompt = f"""
-You are a medical claims reviewer evaluating a healthcare claim for compliance with medical guidelines.
+        except Exception as e:
+            return self._handle_llm_error(e, claim_id)
+
+    def _build_medical_analysis_prompt(
+        self, claim_data: Dict[str, Any], medical_rules: List[str]
+    ) -> str:
+        """Build the medical analysis prompt"""
+        claim_context = self._format_claim_for_llm(claim_data)
+        rules_context = "\n".join([f"- {rule}" for rule in medical_rules])
+
+        return f"""You are a medical claims reviewer evaluating a healthcare claim for compliance with medical guidelines.
 
 CLAIM INFORMATION:
 {claim_context}
@@ -37,64 +63,73 @@ Please analyze this claim and determine:
 2. Are there any medical necessity concerns?
 3. Does the service align with standard medical practice for this diagnosis?
 
-Provide your analysis in the following JSON format:
-{{
-    "is_medically_appropriate": true/false,
-    "medical_necessity_concerns": ["concern1", "concern2"],
-    "alignment_with_standards": "brief explanation",
-    "recommendations": ["recommendation1", "recommendation2"],
-    "confidence_score": 0.0-1.0
-}}
+Be thorough but concise. If you cannot determine medical appropriateness, err on the side of caution."""
 
-Be thorough but concise. If you cannot determine medical appropriateness, err on the side of caution.
-"""
+    def _call_gemini_with_structured_output(self, prompt: str, claim_id: str) -> MedicalAnalysisResponse:
+        """Call Gemini API with structured output using Pydantic model"""
+        logger.info(f"[LLM] Making structured API call for claim {claim_id}")
 
-            # Call OpenAI API
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an expert medical claims reviewer. Always respond with valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                temperature=0.1  # Low temperature for consistent medical analysis
-            )
+        response = self.client.models.generate_content(
+            model="gemini-2.0-flash-001",
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=1000,
+                thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
+                response_mime_type="application/json",
+                response_schema=MedicalAnalysisResponse,
+            ),
+        )
 
-            # Parse LLM response
-            llm_response = response.choices[0].message.content.strip()
+        logger.info(f"[LLM] API call successful for claim {claim_id}")
+        return MedicalAnalysisResponse.model_validate_json(response.text)
 
-            # Extract JSON from response
-            try:
-                result = json.loads(llm_response)
-                return {
-                    "valid": result.get("is_medically_appropriate", True),
-                    "errors": result.get("medical_necessity_concerns", []),
-                    "type": "Medical error" if not result.get("is_medically_appropriate", True) else "No error",
-                    "llm_analysis": result.get("alignment_with_standards", ""),
-                    "recommendations": result.get("recommendations", []),
-                    "confidence": result.get("confidence_score", 0.5)
-                }
-            except json.JSONDecodeError:
-                # Fallback if JSON parsing fails
-                return {
-                    "valid": True,
-                    "errors": ["LLM analysis incomplete"],
-                    "type": "No error",
-                    "llm_analysis": llm_response[:200] + "..." if len(llm_response) > 200 else llm_response,
-                    "recommendations": [],
-                    "confidence": 0.5
-                }
+    def _format_analysis_result(self, analysis: MedicalAnalysisResponse, claim_id: str) -> Dict[str, Any]:
+        """Format the structured analysis result"""
+        result = {
+            "valid": analysis.is_medically_appropriate,
+            "errors": analysis.medical_necessity_concerns,
+            "type": "Medical error" if not analysis.is_medically_appropriate else "No error",
+            "llm_analysis": analysis.alignment_with_standards,
+            "recommendations": analysis.recommendations,
+            "confidence": analysis.confidence_score,
+        }
 
-        except Exception as e:
-            # Fallback for API errors
-            return {
-                "valid": True,
-                "errors": [f"LLM evaluation failed: {str(e)}"],
-                "type": "No error",
-                "llm_analysis": "Unable to perform LLM analysis",
-                "recommendations": ["Manual review recommended"],
-                "confidence": 0.0
-            }
+        logger.info(f"[LLM] Evaluation complete for claim {claim_id}: {result['type']}")
+        return result
+
+    def _handle_llm_error(self, error: Exception, claim_id: str) -> Dict[str, Any]:
+        """Handle LLM evaluation errors with appropriate fallbacks"""
+        error_msg = str(error)
+        logger.error(f"[LLM] API call failed for claim {claim_id}: {error_msg}")
+
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            logger.warning(f"[LLM] Rate limit hit for claim {claim_id}")
+            return self._create_rate_limit_result()
+        else:
+            return self._create_error_result(error_msg)
+
+    def _create_rate_limit_result(self) -> Dict[str, Any]:
+        """Create result for rate limit scenarios"""
+        return {
+            "valid": True,
+            "errors": ["Rate limit exceeded - using basic analysis"],
+            "type": "No error",
+            "llm_analysis": "Analysis deferred due to API rate limits",
+            "recommendations": ["Re-run validation after rate limit reset"],
+            "confidence": 0.1,
+        }
+
+    def _create_error_result(self, error_msg: str) -> Dict[str, Any]:
+        """Create result for general API errors"""
+        return {
+            "valid": True,
+            "errors": [f"LLM evaluation failed: {error_msg}"],
+            "type": "No error",
+            "llm_analysis": "Unable to perform LLM analysis",
+            "recommendations": ["Manual review recommended"],
+            "confidence": 0.0,
+        }
 
     def _format_claim_for_llm(self, claim_data: Dict[str, Any]) -> str:
         """Format claim data for LLM consumption"""
@@ -110,7 +145,12 @@ Be thorough but concise. If you cannot determine medical appropriateness, err on
 
     def validate_llm_response(self, response: Dict[str, Any]) -> bool:
         """Validate LLM response structure"""
-        required_keys = ["is_medically_appropriate", "medical_necessity_concerns",
-                        "alignment_with_standards", "recommendations", "confidence_score"]
+        required_keys = [
+            "is_medically_appropriate",
+            "medical_necessity_concerns",
+            "alignment_with_standards",
+            "recommendations",
+            "confidence_score",
+        ]
 
         return all(key in response for key in required_keys)

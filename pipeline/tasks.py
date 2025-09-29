@@ -1,13 +1,13 @@
+import json
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from sqlalchemy.orm import Session
-
-from shared.database import SessionLocal
-from shared.models import MasterTable, RefinedTable, MetricsTable
 from shared.config import settings
-from .rules import RuleEvaluator
+from shared.database import SessionLocal
+from shared.models import MasterTable, MetricsTable, RefinedTable
+
 from .llm import LLMService
+from .rules import RuleEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,12 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
 
         processed_count = 0
         error_counts = {"No error": 0, "Medical error": 0, "Technical error": 0, "both": 0}
-        total_paid_by_error = {"No error": 0.0, "Medical error": 0.0, "Technical error": 0.0, "both": 0.0}
+        total_paid_by_error = {
+            "No error": 0.0,
+            "Medical error": 0.0,
+            "Technical error": 0.0,
+            "both": 0.0,
+        }
 
         # Get claims to process
         claims = db.query(MasterTable).filter(MasterTable.claim_id.in_(claim_ids)).all()
@@ -48,15 +53,34 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
                 technical_result = rule_evaluator.evaluate_technical_rules(claim_data)
 
                 # Step 2: Medical rule evaluation (LLM)
+                logger.info(f"Evaluating medical rules for claim {claim.claim_id}")
                 medical_result = rule_evaluator.evaluate_medical_rules(claim_data)
-                if medical_result.get("llm_analysis") == "Medical rules evaluation pending LLM integration":
+                logger.info(f"Medical evaluation result: {medical_result.get('type', 'unknown')}")
+
+                if (
+                    medical_result.get("llm_analysis")
+                    == "Medical rules evaluation pending LLM integration"
+                ):
+                    # Load medical rules from cache
+                    cached_medical_rules = rule_evaluator.redis_client.get(f"rules:medical:{settings.tenant_id}")
+                    medical_rules = []
+                    if cached_medical_rules:
+                        cached_data = json.loads(cached_medical_rules)
+                        medical_rules = cached_data.get("medical_validation_rules", [])
+                        logger.info(f"Loaded {len(medical_rules)} medical rules from cache")
+                    else:
+                        logger.warning("No medical rules found in cache - using empty rules")
+
                     # Use LLM service for actual evaluation
-                    medical_rules = []  # Would be loaded from cached rules
+                    logger.info(f"Calling LLM service for claim {claim.claim_id} with {len(medical_rules)} rules")
                     medical_result = llm_service.evaluate_medical_claim(claim_data, medical_rules)
+                    logger.info(f"LLM evaluation completed: {medical_result.get('type', 'unknown')}")
 
                 # Step 3: Combine results
                 combined_errors = technical_result["errors"] + medical_result["errors"]
-                combined_type = _combine_error_types(technical_result["type"], medical_result["type"])
+                combined_type = _combine_error_types(
+                    technical_result["type"], medical_result["type"]
+                )
 
                 # Step 4: Update master table
                 claim.status = "Validated"
@@ -80,7 +104,7 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
                     status=claim.status,
                     error_type=combined_type,
                     error_explanation=claim.error_explanation,
-                    recommended_action=claim.recommended_action
+                    recommended_action=claim.recommended_action,
                 )
                 db.add(refined_claim)
 
@@ -100,10 +124,14 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
         for error_type, count in error_counts.items():
             if count > 0:
                 # Check if metric already exists
-                existing_metric = db.query(MetricsTable).filter(
-                    MetricsTable.error_type == error_type,
-                    MetricsTable.tenant_id == settings.tenant_id
-                ).first()
+                existing_metric = (
+                    db.query(MetricsTable)
+                    .filter(
+                        MetricsTable.error_type == error_type,
+                        MetricsTable.tenant_id == settings.tenant_id,
+                    )
+                    .first()
+                )
 
                 if existing_metric:
                     existing_metric.claim_count += count
@@ -113,7 +141,7 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
                         error_type=error_type,
                         claim_count=count,
                         total_paid_amount=total_paid_by_error[error_type],
-                        tenant_id=settings.tenant_id
+                        tenant_id=settings.tenant_id,
                     )
                     db.add(metric)
 
@@ -123,7 +151,7 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
         return {
             "processed_count": processed_count,
             "error_counts": error_counts,
-            "total_paid_by_error": total_paid_by_error
+            "total_paid_by_error": total_paid_by_error,
         }
 
     except Exception as e:
@@ -170,9 +198,9 @@ def trigger_pipeline_for_tenant(tenant_id: str) -> Dict[str, Any]:
     db = SessionLocal()
     try:
         # Get all unvalidated claims for tenant
-        claims = db.query(MasterTable).filter(
-            MasterTable.status == "Not validated"
-        ).limit(100).all()  # Process in batches
+        claims = (
+            db.query(MasterTable).filter(MasterTable.status == "Not validated").limit(100).all()
+        )  # Process in batches
 
         if not claims:
             return {"message": "No claims to process", "processed_count": 0}
@@ -182,10 +210,7 @@ def trigger_pipeline_for_tenant(tenant_id: str) -> Dict[str, Any]:
         # Process the batch
         result = process_claim_batch(claim_ids)
 
-        return {
-            "message": f"Processed {result['processed_count']} claims",
-            "details": result
-        }
+        return {"message": f"Processed {result['processed_count']} claims", "details": result}
 
     finally:
         db.close()

@@ -63,3 +63,18 @@ class AuditLog(Base):
     user_id = Column(String)
     timestamp = Column(String)
     details = Column(Text)
+
+
+class TaskStatus(Base):
+    __tablename__ = "task_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(String, unique=True, index=True)
+    task_type = Column(String)  # 'validation', 'upload', etc.
+    status = Column(String)  # 'pending', 'running', 'completed', 'failed'
+    progress = Column(Integer, default=0)  # 0-100
+    message = Column(Text)
+    created_at = Column(String)
+    updated_at = Column(String)
+    user_id = Column(String)
+    details = Column(Text)  # JSON string with task-specific data

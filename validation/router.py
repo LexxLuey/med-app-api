@@ -1,19 +1,52 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
-
-from shared.database import get_db
-from shared.models import MasterTable, RefinedTable, MetricsTable
-from shared.schemas import ValidationResult
-from shared.config import settings
 
 from auth.router import get_current_user
 from pipeline.tasks import process_claim_batch
+from shared.config import settings
+from shared.database import SessionLocal, get_db
+from shared.models import MasterTable, MetricsTable
+from shared.schemas import TaskStatusCreate, ValidationResult
+from shared.task_manager import get_task_manager
 
 router = APIRouter(
     prefix="/api/v1/validation",
     tags=["Validation"],
     responses={404: {"description": "Not found"}},
 )
+
+
+def process_claim_batch_with_tracking(claim_ids: list, task_id: str, task_manager):
+    """Process claims with task status tracking"""
+    try:
+        # Update task to running
+        db = SessionLocal()
+        task_manager.update_task_status(
+            db, task_id, "running", progress=10, message=f"Processing {len(claim_ids)} claims..."
+        )
+
+        # Process the claims
+        result = process_claim_batch(claim_ids)
+
+        # Update task as completed
+        task_manager.update_task_status(
+            db,
+            task_id,
+            "completed",
+            progress=100,
+            message=f"Successfully processed {result['processed_count']} claims",
+            details=result,
+        )
+
+    except Exception as e:
+        # Update task as failed
+        db = SessionLocal()
+        task_manager.update_task_status(
+            db, task_id, "failed", message=f"Validation failed: {str(e)}"
+        )
+        raise
+    finally:
+        db.close()
 
 
 def perform_basic_validation(claim: MasterTable) -> ValidationResult:
@@ -27,11 +60,15 @@ def perform_basic_validation(claim: MasterTable) -> ValidationResult:
         error_type = "Technical error"
 
     if claim.paid_amount_aed and claim.paid_amount_aed > settings.paid_amount_threshold:
-        errors.append(f"Paid amount {claim.paid_amount_aed} exceeds threshold {settings.paid_amount_threshold}")
+        errors.append(
+            f"Paid amount {claim.paid_amount_aed} exceeds threshold {settings.paid_amount_threshold}"
+        )
         error_type = "Technical error"
 
     if claim.approval_number and len(str(claim.approval_number)) < settings.approval_number_min:
-        errors.append(f"Approval number {claim.approval_number} is too short (min {settings.approval_number_min})")
+        errors.append(
+            f"Approval number {claim.approval_number} is too short (min {settings.approval_number_min})"
+        )
         error_type = "Technical error"
 
     status = "Validated" if not errors else "Not validated"
@@ -43,7 +80,7 @@ def perform_basic_validation(claim: MasterTable) -> ValidationResult:
         status=status,
         error_type=error_type,
         error_explanation=explanation,
-        recommended_action=recommendation
+        recommended_action=recommendation,
     )
 
 
@@ -51,9 +88,15 @@ def perform_basic_validation(claim: MasterTable) -> ValidationResult:
 async def run_validation(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
+    task_manager=Depends(get_task_manager),
 ):
     """Trigger validation process for all claims using the pipeline"""
+    # Check if validation can be started
+    can_start, reason = task_manager.can_start_task(db, "validation", current_user.username)
+    if not can_start:
+        raise HTTPException(status_code=409, detail=reason)
+
     # Get all claims that haven't been validated yet
     claims = db.query(MasterTable).filter(MasterTable.status == "Not validated").limit(50).all()
 
@@ -61,21 +104,91 @@ async def run_validation(
         return {"message": "No claims to validate", "processed_count": 0}
 
     claim_ids = [claim.claim_id for claim in claims]
+    task_id = task_manager.generate_task_id("validation")
 
-    # Add background task for processing
-    background_tasks.add_task(process_claim_batch, claim_ids)
+    # Create task status record
+    task_data = TaskStatusCreate(
+        task_id=task_id,
+        task_type="validation",
+        user_id=current_user.username,
+        message=f"Starting validation of {len(claim_ids)} claims",
+    )
+    task_status = task_manager.create_task(db, task_data)
+
+    # Add background task for processing with task tracking
+    background_tasks.add_task(process_claim_batch_with_tracking, claim_ids, task_id, task_manager)
 
     return {
         "message": f"Validation pipeline started for {len(claim_ids)} claims",
+        "task_id": task_id,
         "claim_ids": claim_ids,
-        "status": "processing"
+        "status": "processing",
     }
+
+
+@router.get("/status/{task_id}")
+async def get_task_status(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    task_manager=Depends(get_task_manager),
+):
+    """Get status of a specific validation task"""
+    task_status = task_manager.get_task_status(db, task_id)
+
+    if not task_status:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check if user owns this task
+    if task_status.user_id != current_user.username:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return {
+        "task_id": task_status.task_id,
+        "task_type": task_status.task_type,
+        "status": task_status.status,
+        "progress": task_status.progress,
+        "message": task_status.message,
+        "created_at": task_status.created_at,
+        "updated_at": task_status.updated_at,
+        "details": task_status.details,
+    }
+
+
+@router.get("/tasks")
+async def get_user_tasks(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    task_manager=Depends(get_task_manager),
+):
+    """Get all tasks for the current user"""
+    from shared.models import TaskStatus as TaskStatusModel
+
+    tasks = (
+        db.query(TaskStatusModel)
+        .filter(TaskStatusModel.user_id == current_user.username)
+        .order_by(TaskStatusModel.created_at.desc())
+        .limit(20)
+        .all()
+    )
+
+    return [
+        {
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "status": task.status,
+            "progress": task.progress,
+            "message": task.message,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+        }
+        for task in tasks
+    ]
 
 
 @router.get("/results")
 async def get_validation_results(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    db: Session = Depends(get_db), current_user=Depends(get_current_user)
 ):
     """Get validation results and metrics"""
     # Get metrics
@@ -89,8 +202,9 @@ async def get_validation_results(
             {
                 "error_type": m.error_type,
                 "claim_count": m.claim_count,
-                "total_paid_amount": m.total_paid_amount
-            } for m in metrics
+                "total_paid_amount": m.total_paid_amount,
+            }
+            for m in metrics
         ],
         "sample_claims": [
             {
@@ -98,7 +212,8 @@ async def get_validation_results(
                 "status": c.status,
                 "error_type": c.error_type,
                 "error_explanation": c.error_explanation,
-                "recommended_action": c.recommended_action
-            } for c in claims
-        ]
+                "recommended_action": c.recommended_action,
+            }
+            for c in claims
+        ],
     }

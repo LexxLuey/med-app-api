@@ -75,3 +75,26 @@ class AuditLog(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TaskStatus(BaseModel):
+    id: int
+    task_id: str
+    task_type: str
+    status: str
+    progress: int
+    message: str
+    created_at: str
+    updated_at: str
+    user_id: str
+    details: str
+
+    class Config:
+        from_attributes = True
+
+
+class TaskStatusCreate(BaseModel):
+    task_id: str
+    task_type: str
+    user_id: str
+    message: str = "Task started"

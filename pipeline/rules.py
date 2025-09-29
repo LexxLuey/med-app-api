@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 import redis
 from PyPDF2 import PdfReader
@@ -77,9 +77,11 @@ class RuleParser:
     def _extract_list(self, text: str, pattern: str) -> list:
         """Extract list items from text"""
         # Simple extraction - in production, use more sophisticated NLP
-        section = re.search(rf"{pattern}[:\s]*(.*?)(?:\n\n|\n[A-Z]|$)", text, re.DOTALL | re.IGNORECASE)
+        section = re.search(
+            rf"{pattern}[:\s]*(.*?)(?:\n\n|\n[A-Z]|$)", text, re.DOTALL | re.IGNORECASE
+        )
         if section:
-            items = re.findall(r'\b\w+\b', section.group(1))
+            items = re.findall(r"\b\w+\b", section.group(1))
             return [item for item in items if len(item) > 2]
         return []
 
@@ -87,7 +89,7 @@ class RuleParser:
         """Extract regex patterns for validation"""
         # Placeholder - extract diagnosis code patterns
         patterns = []
-        matches = re.findall(r'\b[A-Z]\d{2}(?:\.\d+)?\b', text)
+        matches = re.findall(r"\b[A-Z]\d{2}(?:\.\d+)?\b", text)
         patterns.extend(matches)
         return list(set(patterns))  # Remove duplicates
 
@@ -95,10 +97,10 @@ class RuleParser:
         """Extract service code mappings"""
         # Placeholder - simple key-value extraction
         mappings = {}
-        lines = text.split('\n')
+        lines = text.split("\n")
         for line in lines:
-            if ':' in line and len(line.split(':')) == 2:
-                key, value = line.split(':', 1)
+            if ":" in line and len(line.split(":")) == 2:
+                key, value = line.split(":", 1)
                 key = key.strip()
                 value = value.strip()
                 if len(key) > 0 and len(value) > 0:
@@ -109,11 +111,11 @@ class RuleParser:
         """Extract medical validation rules"""
         # Placeholder - extract bullet points or numbered rules
         rules = []
-        lines = text.split('\n')
+        lines = text.split("\n")
         for line in lines:
             line = line.strip()
-            if line.startswith(('•', '-', '*')) or re.match(r'^\d+\.', line):
-                rules.append(line.lstrip('•-*123456789. '))
+            if line.startswith(("•", "-", "*")) or re.match(r"^\d+\.", line):
+                rules.append(line.lstrip("•-*123456789. "))
         return rules
 
 
@@ -151,14 +153,12 @@ class RuleEvaluator:
         approval_number = claim_data.get("approval_number")
         min_approval = rules.get("approval_number_min", 100000)
         if approval_number and len(str(approval_number)) < len(str(min_approval)):
-            errors.append(f"Approval number {approval_number} is too short (min length {len(str(min_approval))})")
+            errors.append(
+                f"Approval number {approval_number} is too short (min length {len(str(min_approval))})"
+            )
             error_type = "Technical error"
 
-        return {
-            "valid": len(errors) == 0,
-            "errors": errors,
-            "type": error_type
-        }
+        return {"valid": len(errors) == 0, "errors": errors, "type": error_type}
 
     def evaluate_medical_rules(self, claim_data: Dict[str, Any]) -> Dict[str, Any]:
         """Evaluate claim against medical rules using LLM"""
@@ -173,5 +173,5 @@ class RuleEvaluator:
             "valid": True,
             "errors": [],
             "type": "No error",
-            "llm_analysis": "Medical rules evaluation pending LLM integration"
+            "llm_analysis": "Medical rules evaluation pending LLM integration",
         }

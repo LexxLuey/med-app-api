@@ -1,12 +1,29 @@
+import logging
+import warnings
+
+# Suppress Pydantic warnings from Google GenAI library
+warnings.filterwarnings(
+    "ignore", message="Field name .* shadows an attribute in parent", category=UserWarning
+)
+
+# Configure logging to ensure background task logs are visible
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(name)s - %(levelname)s - %(message)s',
+    force=True  # Force reconfiguration of existing loggers
+)
+
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from audit.router import router as audit_router
 from auth.router import router as auth_router
 from claims.router import router as claims_router
 from health.router import router as health_router
+from shared.config import settings
 from upload.router import router as upload_router
-from audit.router import router as audit_router
 from validation.router import router as validation_router
 
 
@@ -30,13 +47,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
+# CORS (12-Factor compliant configuration)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify allowed origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_methods_list,
+    allow_headers=settings.cors_headers_list,
 )
 
 # Include routers

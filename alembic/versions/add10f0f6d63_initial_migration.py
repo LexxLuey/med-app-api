@@ -42,9 +42,7 @@ def upgrade() -> None:
         sa.Column("recommended_action", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_master_table_claim_id"), "master_table", ["claim_id"], unique=True
-    )
+    op.create_index(op.f("ix_master_table_claim_id"), "master_table", ["claim_id"], unique=True)
     op.create_index(op.f("ix_master_table_id"), "master_table", ["id"], unique=False)
     op.create_table(
         "metrics_table",
@@ -82,9 +80,7 @@ def upgrade() -> None:
         sa.Column("recommended_action", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_refined_table_claim_id"), "refined_table", ["claim_id"], unique=True
-    )
+    op.create_index(op.f("ix_refined_table_claim_id"), "refined_table", ["claim_id"], unique=True)
     op.create_index(op.f("ix_refined_table_id"), "refined_table", ["id"], unique=False)
     # ### end Alembic commands ###
 
