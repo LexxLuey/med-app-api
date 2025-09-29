@@ -16,3 +16,5 @@ pypdf2==3.0.1
 pandas==2.1.4
 openpyxl==3.1.5
 pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2

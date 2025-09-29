@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from auth.router import get_current_user
 from pipeline.tasks import process_claim_batch
@@ -216,4 +217,78 @@ async def get_validation_results(
             }
             for c in claims
         ],
+    }
+
+
+@router.get("/claims-validated")
+async def get_paginated_validation_results(
+    skip: int = 0,
+    limit: int = 50,
+    error_type: str = None,
+    search: str = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Get paginated validation results with filtering and search"""
+    # Base query for validated claims
+    query = db.query(MasterTable)
+
+    # Apply filters
+    if error_type and error_type != "all":
+        query = query.filter(MasterTable.error_type == error_type)
+
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                MasterTable.claim_id.ilike(search_term),
+                MasterTable.error_explanation.ilike(search_term),
+                MasterTable.recommended_action.ilike(search_term),
+            )
+        )
+
+    # Get total count for pagination
+    total_count = query.count()
+
+    # Apply pagination and get results
+    claims = (
+        query
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    # Get available error types for filtering
+    error_types = (
+        db.query(MasterTable.error_type)
+        .filter(MasterTable.error_type.isnot(None))
+        .distinct()
+        .all()
+    )
+    available_error_types = [et[0] for et in error_types]
+
+    return {
+        "claims": [
+            {
+                "id": c.id,
+                "claim_id": c.claim_id,
+                "status": c.status,
+                "error_type": c.error_type,
+                "error_explanation": c.error_explanation,
+                "recommended_action": c.recommended_action,
+                "paid_amount_aed": c.paid_amount_aed,
+                "service_date": c.service_date,
+                "encounter_type": c.encounter_type,
+            }
+            for c in claims
+        ],
+        "pagination": {
+            "total": total_count,
+            "skip": skip,
+            "limit": limit,
+            "has_more": skip + limit < total_count,
+        },
+        "filters": {
+            "available_error_types": available_error_types,
+        },
     }
