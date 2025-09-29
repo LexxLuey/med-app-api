@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from google import genai
 from pydantic import BaseModel, Field
+
 from shared.config import settings
 
 logger = logging.getLogger(__name__)
@@ -10,11 +11,16 @@ logger = logging.getLogger(__name__)
 
 class MedicalAnalysisResponse(BaseModel):
     """Structured response model for medical claim analysis"""
+
     is_medically_appropriate: bool = Field(description="Whether the claim is medically appropriate")
     medical_necessity_concerns: List[str] = Field(description="List of medical necessity concerns")
-    alignment_with_standards: str = Field(description="Explanation of alignment with medical standards")
+    alignment_with_standards: str = Field(
+        description="Explanation of alignment with medical standards"
+    )
     recommendations: List[str] = Field(description="Actionable recommendations")
-    confidence_score: float = Field(description="Confidence score between 0.0 and 1.0", ge=0.0, le=1.0)
+    confidence_score: float = Field(
+        description="Confidence score between 0.0 and 1.0", ge=0.0, le=1.0
+    )
 
 
 class LLMService:
@@ -30,7 +36,7 @@ class LLMService:
         self, claim_data: Dict[str, Any], medical_rules: List[str]
     ) -> Dict[str, Any]:
         """Evaluate medical claim using LLM with structured output"""
-        claim_id = claim_data.get('claim_id', 'unknown')
+        claim_id = claim_data.get("claim_id", "unknown")
         logger.info(f"[LLM] Starting evaluation for claim {claim_id}")
 
         try:
@@ -65,7 +71,9 @@ Please analyze this claim and determine:
 
 Be thorough but concise. If you cannot determine medical appropriateness, err on the side of caution."""
 
-    def _call_gemini_with_structured_output(self, prompt: str, claim_id: str) -> MedicalAnalysisResponse:
+    def _call_gemini_with_structured_output(
+        self, prompt: str, claim_id: str
+    ) -> MedicalAnalysisResponse:
         """Call Gemini API with structured output using Pydantic model"""
         logger.info(f"[LLM] Making structured API call for claim {claim_id}")
 
@@ -84,7 +92,9 @@ Be thorough but concise. If you cannot determine medical appropriateness, err on
         logger.info(f"[LLM] API call successful for claim {claim_id}")
         return MedicalAnalysisResponse.model_validate_json(response.text)
 
-    def _format_analysis_result(self, analysis: MedicalAnalysisResponse, claim_id: str) -> Dict[str, Any]:
+    def _format_analysis_result(
+        self, analysis: MedicalAnalysisResponse, claim_id: str
+    ) -> Dict[str, Any]:
         """Format the structured analysis result"""
         result = {
             "valid": analysis.is_medically_appropriate,

@@ -9,8 +9,8 @@ warnings.filterwarnings(
 # Configure logging to ensure background task logs are visible
 logging.basicConfig(
     level=logging.INFO,
-    format='%(name)s - %(levelname)s - %(message)s',
-    force=True  # Force reconfiguration of existing loggers
+    format="%(name)s - %(levelname)s - %(message)s",
+    force=True,  # Force reconfiguration of existing loggers
 )
 
 from contextlib import asynccontextmanager

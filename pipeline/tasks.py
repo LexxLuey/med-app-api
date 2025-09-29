@@ -62,7 +62,9 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
                     == "Medical rules evaluation pending LLM integration"
                 ):
                     # Load medical rules from cache
-                    cached_medical_rules = rule_evaluator.redis_client.get(f"rules:medical:{settings.tenant_id}")
+                    cached_medical_rules = rule_evaluator.redis_client.get(
+                        f"rules:medical:{settings.tenant_id}"
+                    )
                     medical_rules = []
                     if cached_medical_rules:
                         cached_data = json.loads(cached_medical_rules)
@@ -72,9 +74,13 @@ def process_claim_batch(claim_ids: List[str]) -> Dict[str, Any]:
                         logger.warning("No medical rules found in cache - using empty rules")
 
                     # Use LLM service for actual evaluation
-                    logger.info(f"Calling LLM service for claim {claim.claim_id} with {len(medical_rules)} rules")
+                    logger.info(
+                        f"Calling LLM service for claim {claim.claim_id} with {len(medical_rules)} rules"
+                    )
                     medical_result = llm_service.evaluate_medical_claim(claim_data, medical_rules)
-                    logger.info(f"LLM evaluation completed: {medical_result.get('type', 'unknown')}")
+                    logger.info(
+                        f"LLM evaluation completed: {medical_result.get('type', 'unknown')}"
+                    )
 
                 # Step 3: Combine results
                 combined_errors = technical_result["errors"] + medical_result["errors"]
